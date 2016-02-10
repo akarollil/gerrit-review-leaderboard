@@ -1,0 +1,26 @@
+{% load staticfiles %}
+{% block title %}Gerrit Review Leaderboard{% endblock %}
+{% block content %}
+{% if reviewers %}
+<table id="reviewers">
+<thead>
+    <tr>
+        <th>Reviewer Name</th>
+        <th>Reviews</th>
+        <th>Comments</th>
+    </tr>
+</thead>
+<tbody>
+    {% for reviewer in reviewers %}
+    <tr>
+        <td>{{reviewer.name}}</td>
+        <td>{{reviewer.review_count}}</td>
+        <td>{{reviewer.comment_count}}</td>
+    </tr>
+    {% endfor %}
+</tbody>
+</table>
+{% else %}
+    <p>No reviewers found.</p>
+{% endif %}
+{% endblock %}
