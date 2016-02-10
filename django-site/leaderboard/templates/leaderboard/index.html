@@ -1,8 +1,22 @@
 {% load staticfiles %}
 {% block title %}Gerrit Review Leaderboard{% endblock %}
+
+{% block extra_head %}
+{% if reviewers %}
+<script type="text/javascript" charset="utf-8" src="{% static "leaderboard/jquery-2.2.0.min.js" %}"></script>
+<script type="text/javascript" charset="utf-8" src="{% static "leaderboard/jquery.tablesorter.min.js" %}"></script>
+<link rel="stylesheet" href="{% static "leaderboard/tablesorter/style.css" %}" type="text/css" media="screen" charset="utf-8" />
+<script type="text/javascript" charset="utf-8">
+    $(document).ready(function() {
+        $("#reviewers").tablesorter( {sortList: [[1,1], [2,1]]} );
+    });
+</script>
+{% endif %}
+{% endblock %}
+
 {% block content %}
 {% if reviewers %}
-<table id="reviewers">
+<table id="reviewers" class="tablesorter">
 <thead>
     <tr>
         <th>Reviewer Name</th>
