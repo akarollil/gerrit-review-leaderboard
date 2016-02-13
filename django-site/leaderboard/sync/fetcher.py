@@ -26,6 +26,9 @@ def _do_pull(hostname, port, max_days):
         to pull
     :Return: List of Change objects if any, empty list otherwise
     """
+    logging.info(
+        "Pulling from %s:%s a maximum of %d days of changes..." %
+        (hostname, port, max_days))
     # Latest timestamp found for a change in the database. Changes after this
     # timestamp will be pulled, but the time is limited to max_days
     last_synced_change_datetime_utc = database_helper.get_last_synced_change_timestamp()
@@ -91,6 +94,9 @@ def pull_and_store_changes():
     hostname = config[CONFIG_FILE_SECTION]['hostname']
     port = int(config[CONFIG_FILE_SECTION]['port'])
     max_days = int(config[CONFIG_FILE_SECTION]['maxdays'])
+    logging.info(
+        "Loaded hostname: %s port: %d max_days: %d from %s",
+        hostname, port, max_days, CONFIG_FILE)
     # pull changes
     gerrit_changes = _do_pull(hostname, port, max_days)
     # update database
