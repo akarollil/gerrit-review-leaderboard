@@ -254,6 +254,7 @@ class TestDatabaseHelper(TestCase):
 class TestFetcher(TestCase):
     HOST_NAME = "gerrit.myserver.com"
     PORT = 12345
+    MAX_DAYS = 30
     FAKE_CHANGE = "Fake change"
     found_hostname = None
     found_datetime_str = None
@@ -282,7 +283,7 @@ class TestFetcher(TestCase):
         # convert to string with milliseconds stripped for test comparison
         expected_datetime_utc_str = expected_datetime_utc.strftime(
             '%Y-%m-%d %H:%M:%S')
-        fake_change = fetcher._do_pull(self.HOST_NAME, self.PORT)
+        fake_change = fetcher._do_pull(self.HOST_NAME, self.PORT, self.MAX_DAYS)
         self.assertEqual(self.found_hostname, self.HOST_NAME,
                          "Expected %s, found %s" % (self.HOST_NAME,
                                                     self.found_hostname))
@@ -302,7 +303,7 @@ class TestFetcher(TestCase):
         current_datetime_utc = (
             datetime.utcnow() -
             timedelta(
-                days=fetcher.MAX_DAYS))
+                days=self.MAX_DAYS))
         self._assert_fetch_params(current_datetime_utc)
 
     def test_do_pull_with_existing_changes(self):
@@ -323,7 +324,7 @@ class TestFetcher(TestCase):
 
     def test_do_pull_with_really_old_existing_change(self):
         max_days_ago_datetime_utc = datetime.utcnow(
-        ) - timedelta(days=fetcher.MAX_DAYS)
+        ) - timedelta(days=self.MAX_DAYS)
         # a change more than MAX_DAYS days ago
         more_than_max_days_ago_utc = max_days_ago_datetime_utc - \
             timedelta(days=1)
@@ -341,7 +342,7 @@ class TestSystem(TestCase):
         """Queries gerrit, updates db, deserializes database to JSON
         """
         fetcher.MAX_DAYS = 1
-        fetcher.pull_and_store_changes("gerrit.myserver.com")
+        fetcher.pull_and_store_changes()
         from django.core.serializers import serialize
         reviewers = Reviewer.objects.all()
         changes = Change.objects.all()

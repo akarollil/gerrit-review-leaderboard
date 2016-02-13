@@ -7,13 +7,11 @@ from django.template import RequestContext, loader
 from .models import Reviewer
 from .sync import fetcher
 
-HOST_NAME = "gerrit.myhost.com"
-
 
 def index(request):
     # fetch outstanding changes, up to a configured maximum specified in
     # sync/fetcher.conf
-    fetcher.pull_and_store_changes(HOST_NAME)
+    fetcher.pull_and_store_changes()
     reviewers = Reviewer.objects.all()
     reviewers_list = []
     for reviewer in reviewers:
