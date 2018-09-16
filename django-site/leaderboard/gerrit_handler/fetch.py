@@ -16,18 +16,75 @@ from pygerrit.error import GerritError
 MAX_CHANGES_FETCH_COUNT = 500
 
 
-def _fetch(gerrit_client, datetime_utc, skip):
-    """Fetch changes starting from a certain date
+def _fetch(hostname, username, port, gerrit_query):
+    """ Fetch changes from gerrit by executing given query
 
-    Use gerrit_client to fetch changes starting from datetime_utc but
-    limited to MAX_CHANGES_FETCH_COUNT changes, skipping changes if
-    skip is specified, starting at the newest change
+    Connects to gerrit at given hostname with given username via SSH and uses
+    given gerrit query to fetch changes
 
-    :arg pygerrit.client.GerritClient gerrit_client: Gerrit SSH client
-        for use in fetching changes
+    :arg str hostname: gerrit server hostname
+    :arg str username: gerrit username
+    :arg int port: port for gerrit service
+    :arg str gerrit_query: gerrit query to be executed via SSH
+
+    :Return: List of Change objects if any, empty list on error
+    """
+    try:
+        logging.info("Connecting to %s@%s:%d", username, hostname, port)
+        gerrit_client = GerritClient(host=hostname,
+                                     username=username,
+                                     port=port)
+        logging.info("Connected to Gerrit version [%s]",
+                     gerrit_client.gerrit_version())
+    except GerritError as err:
+        logging.error("Gerrit error: %s", err)
+        return []
+
+    logging.info("Fetching changes with %s", gerrit_query)
+    changes = []
+    try:
+        changes = gerrit_client.query(gerrit_query)
+    except ValueError as value_error:
+        # should not happen as query above should have no errors
+        logging.error("Query %s failed: %s!", gerrit_query, value_error)
+
+    logging.info("Number of changes fetched: %d", len(changes))
+    return changes
+
+
+def fetch_open_changes(hostname, username, port=29418):
+    """ Fetch all open changes from gerrit
+
+    Connects to gerrit at given hostname with given username via SSH and uses
+    gerrit query to fetch all open changes
+
+    :arg str hostname: gerrit server hostname
+    :arg str username: gerrit username
+    :arg int port: port for gerrit service
+
+    :Return: List of Change objects if any, empty list otherwise
+    """
+    fetch_query = "status:open"
+    return _fetch(hostname, username, port, fetch_query)
+
+
+def fetch_merged_changes(hostname, username, datetime_utc, port=29418,
+                         skip=None):
+    """Fetch merged changes from gerrit after timestamp.
+
+    Connects to gerrit at given hostname with given username via SSH and uses
+    gerrit query to fetch all changes merged after given datetime, limited to
+    500 changes. If query result has more than 500 changes, skip parameter
+    can be used to specify count of already fetched changes (newest) to
+    skip. Expects given username's public key on current system to have been
+    installed on host with given hostname.
+
+    :arg str hostname: gerrit server hostname
+    :arg str username: gerrit username
     :arg datetime.datetime datetime_utc: datetime obj specifying time
-        in UTC, changes fetched should have been merged after time
-        specified
+         in UTC, changes fetched should have been merged after time
+         specified
+    :arg int port: port for gerrit service
     :arg int skip: count of changes to skip starting from newest
 
     :Return: List of Change objects if any, empty list otherwise
@@ -49,53 +106,12 @@ def _fetch(gerrit_client, datetime_utc, skip):
     if skip:
         fetch_query += " -S %d" % skip
 
-    logging.info("Fetching changes with %s", fetch_query)
-    changes = []
-    try:
-        changes = gerrit_client.query(fetch_query)
-    except ValueError as value_error:
-        # should not happen as query above should have no errors
-        logging.error("Query %s failed: %s", fetch_query, value_error)
-
-    logging.info("Number of changes fetched: %d", len(changes))
-    return changes
-
-
-def fetch_changes(hostname, username, datetime_utc, port=29418, skip=None):
-    """Fetch merged changes from gerrit after timestamp.
-
-    Connects to gerrit at given hostname with given username via SSH and uses
-    gerrit query to fetch all changes merged after given datetime, limited to
-    500 changes. If query result has more than 500 changes, skip parameter
-    can be used to specify count of already fetched changes (newest) to
-    skip. Expects given username's public key on current system to have been
-    installed on host with given hostname.
-
-    :arg str hostname: gerrit server hostname
-    :arg str username: gerrit username
-    :arg datetime.datetime datetime_utc: datetime obj specifying time
-         in UTC, changes fetched should have been merged after time
-         specified
-    :arg int port: port for gerrit service
-    :arg int skip: count of changes to skip starting from newest
-
-    :Return: List of Change objects if any, empty list otherwise
-    """
-    try:
-        logging.info("Connecting to %s@%s:%d", username, hostname, port)
-        gerrit_client = GerritClient(host=hostname,
-                                     username=username,
-                                     port=port)
-        logging.info("Connected to Gerrit version [%s]",
-                     gerrit_client.gerrit_version())
-    except GerritError as err:
-        logging.error("Gerrit error: %s", err)
-        return []
-
-    return _fetch(gerrit_client, datetime_utc, skip)
+    return _fetch(hostname, username, port, fetch_query)
 
 
 def _main():
+    gerrit_hostname = "gerrit.myhost.com"
+    gerrit_username = "gerritleaderboard"
     # set log level to INFO
     logging.basicConfig(level=logging.INFO)
     # fetch past 2 days' changes, have to be specified in UTC days
@@ -103,7 +119,9 @@ def _main():
     timestamp = calendar.timegm(day_before_datetime_utc.timetuple())
     local_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
     logging.info("Fetching changes since %s", local_time)
-    fetch_changes("gerrit.myhost.com", "anonymous", day_before_datetime_utc)
+    # fetch_merged_changes(gerrit_hostname, gerrit_username,
+    #              day_before_datetime_utc)
+    print(fetch_open_changes(gerrit_hostname, gerrit_username))
 
 
 if __name__ == "__main__":

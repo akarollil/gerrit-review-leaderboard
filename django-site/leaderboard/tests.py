@@ -316,15 +316,17 @@ class TestFetcher(TestCase):
 
     def setUp(self):
         # mock out gerrit fetch
-        self.saved_fetch_method = fetcher.fetch.fetch_changes
-        fetcher.fetch.fetch_changes = self._mock_fetch
+        self.saved_fetch_method = fetcher.fetch.fetch_merged_changes
+        fetcher.fetch.fetch_merged_changes = self._mock_fetch
         # mock out database helper update
         self.saved_database_helper_update = fetcher.database_helper.update
         fetcher.database_helper.update = self._mock_database_helper_update
+        # reset any previous fetches and continuations
+        fetcher.fetch_after_datetime_utc = None
 
     def tearDown(self):
         # unmock gerrit fetch
-        fetcher.fetch.fetch_changes = self.saved_fetch_method
+        fetcher.fetch.fetch_merged_changes = self.saved_fetch_method
         # unmock database helper update
         fetcher.database_helper.update = self.saved_database_helper_update
 
@@ -360,19 +362,21 @@ class TestFetcher(TestCase):
         self._assert_fetch_params(current_datetime_utc)
 
     def test_do_pull_with_existing_changes(self):
-        # a change 10 days ago
+        # test that timestamp from latest change in database is used as start
+        # for fetching changes
+        # a change 10 days ago (latest change)
         ten_days_ago_datetime_utc = datetime.utcnow() - timedelta(days=10)
         change = Change(
             timestamp=ten_days_ago_datetime_utc,
             change_id="test_change_id_1")
         change.save()
-        # a change 20 days ago
+        # a change 20 days ago (earlier change)
         twenty_days_ago_datetime_utc = datetime.utcnow() - timedelta(days=20)
         change = Change(
             timestamp=twenty_days_ago_datetime_utc,
             change_id="test_change_id_2")
         change.save()
-
+        # assert that fetch is done using latest change which is 10 days ago
         self._assert_fetch_params(ten_days_ago_datetime_utc)
 
     def test_do_pull_with_really_old_existing_change(self):
@@ -383,7 +387,7 @@ class TestFetcher(TestCase):
             timedelta(days=1)
         change = Change(
             timestamp=more_than_max_days_ago_utc,
-            change_id="test_change_id_1")
+            change_id="test_change_id_3")
         change.save()
 
         self._assert_fetch_params(max_days_ago_datetime_utc)

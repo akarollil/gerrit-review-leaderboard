@@ -70,9 +70,9 @@ def _do_pull(hostname, username, port, max_days, skip):
                 # fetch all changes since last fetched change
                 fetch_after_datetime_utc = last_synced_change_datetime_utc
 
-    return fetch.fetch_changes(hostname, username,
-                               fetch_after_datetime_utc,
-                               port, skip)
+    return fetch.fetch_merged_changes(hostname, username,
+                                      fetch_after_datetime_utc,
+                                      port, skip)
 
 
 def _create_default_config_file(config):
