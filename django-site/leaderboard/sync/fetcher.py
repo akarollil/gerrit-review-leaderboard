@@ -4,6 +4,7 @@ persisting
 import configparser
 from datetime import datetime, timedelta
 import logging
+import os
 
 from . import database_helper
 from ..gerrit_handler import fetch
@@ -11,6 +12,8 @@ from ..gerrit_handler import fetch
 
 # configuration file for fetching gerrit changes
 CONFIG_FILE = "fetcher.cfg"
+CUR_DIR = os.getcwd()
+CONFIG_FILE_PATH = "%s/%s" % (CUR_DIR, CONFIG_FILE)
 CONFIG_FILE_SECTION = "fetch"
 
 fetch_after_datetime_utc = None
@@ -75,7 +78,7 @@ def _create_default_config_file(config):
                                    'port': '29418',
                                    'maxdays': '180'}
     # write config file
-    with open(CONFIG_FILE, 'w') as configfile:
+    with open(CONFIG_FILE_PATH, 'w') as configfile:
         config.write(configfile)
     return config
 
@@ -92,10 +95,10 @@ def pull_and_store_changes():
 
     """
     config = configparser.ConfigParser()
-    if not config.read(CONFIG_FILE):
+    if not config.read(CONFIG_FILE_PATH):
         logging.warning(
             "Configuration file %s not found, creating a default one",
-            CONFIG_FILE)
+            CONFIG_FILE_PATH)
         config = _create_default_config_file(config)
 
     hostname = config[CONFIG_FILE_SECTION]['hostname']
@@ -103,7 +106,7 @@ def pull_and_store_changes():
     max_days = int(config[CONFIG_FILE_SECTION]['maxdays'])
     logging.info(
         "Loaded hostname: %s port: %d max_days: %d from %s",
-        hostname, port, max_days, CONFIG_FILE)
+        hostname, port, max_days, CONFIG_FILE_PATH)
     # reset any previous fetches and continuations
     global fetch_after_datetime_utc
     fetch_after_datetime_utc = None
