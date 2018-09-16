@@ -1,20 +1,13 @@
 """For pulling gerrit changes based on existing changes in database and
 persisting
 """
-import configparser
 from datetime import datetime, timedelta
 import logging
-import os
 
 from . import database_helper
+from ..config_handler.config import GerritFetchConfig
 from ..gerrit_handler import fetch
 
-
-# configuration file for fetching gerrit changes
-CONFIG_FILE = "fetcher.cfg"
-CUR_DIR = os.getcwd()
-CONFIG_FILE_PATH = "%s/%s" % (CUR_DIR, CONFIG_FILE)
-CONFIG_FILE_SECTION = "fetch"
 
 fetch_after_datetime_utc = None
 
@@ -75,17 +68,6 @@ def _do_pull(hostname, username, port, max_days, skip):
                                       port, skip)
 
 
-def _create_default_config_file(config):
-    config[CONFIG_FILE_SECTION] = {'hostname': 'gerrit.myhost.com',
-                                   'username': 'gerritleaderboard',
-                                   'port': '29418',
-                                   'maxdays': '180'}
-    # write config file
-    with open(CONFIG_FILE_PATH, 'w') as configfile:
-        config.write(configfile)
-    return config
-
-
 def pull_and_store_changes():
     """Pull changes from gerrit, process, and store in database
 
@@ -97,32 +79,29 @@ def pull_and_store_changes():
     changes.
 
     """
-    config = configparser.ConfigParser()
-    if not config.read(CONFIG_FILE_PATH):
-        logging.warning(
-            "Configuration file %s not found, creating a default one",
-            CONFIG_FILE_PATH)
-        config = _create_default_config_file(config)
-
-    hostname = config[CONFIG_FILE_SECTION]['hostname']
-    username = config[CONFIG_FILE_SECTION]['username']
-    port = int(config[CONFIG_FILE_SECTION]['port'])
-    max_days = int(config[CONFIG_FILE_SECTION]['maxdays'])
-    logging.info(
-        "Loaded hostname: %s username: %s port: %d max_days: %d from %s",
-        hostname, username, port, max_days, CONFIG_FILE_PATH)
     # reset any previous fetches and continuations
     global fetch_after_datetime_utc
     fetch_after_datetime_utc = None
+    config = GerritFetchConfig()
     # pull and store changes, MAX_CHANGES_FETCH_COUNT at a time
     skip = 0
-    gerrit_changes = _do_pull(hostname, username, port, max_days, skip)
+    gerrit_changes = _do_pull(
+        config.hostname(),
+        config.username(),
+        config.port(),
+        config.max_days(),
+        skip)
     while gerrit_changes:
         # update database
         database_helper.update(gerrit_changes)
         # there might be more changes, skip already fetched changes and try
         # again
         skip += len(gerrit_changes)
-        gerrit_changes = _do_pull(hostname, username, port, max_days, skip)
+        gerrit_changes = _do_pull(
+            config.hostname(),
+            config.username(),
+            config.port(),
+            config.max_days(),
+            skip)
 
     logging.info("Fetched a total of %d changes", skip)
