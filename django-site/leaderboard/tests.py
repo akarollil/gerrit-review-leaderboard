@@ -275,11 +275,13 @@ class TestFetcher(TestCase):
     timestamp, and that all changes are fetched in chunks.
     """
     HOST_NAME = "gerrit.myserver.com"
+    USER_NAME = "gerritleaderboard"
     PORT = 12345
     MAX_DAYS = 30
     # not testing processing of changes returned, so this can be anything
     FAKE_CHANGES = ["Fake change"]
     found_hostname = None
+    found_username = None
     found_datetime_str = None
     found_port = None
     saved_fetch_method = None
@@ -290,10 +292,11 @@ class TestFetcher(TestCase):
     # to keep tab of skip params used for multiple fetch changes testing
     skip_params_used = []
 
-    def _mock_fetch(self, hostname, datetime_utc, port, skip):
+    def _mock_fetch(self, hostname, username, datetime_utc, port, skip):
         """Mocks fetch.fetch_changes()
         """
         self.found_hostname = hostname
+        self.found_username = username
         # convert to string with second precision for test comparison
         self.found_datetime_str = datetime_utc.strftime('%Y-%m-%d %H:%M:%S')
         self.found_port = port
@@ -329,11 +332,14 @@ class TestFetcher(TestCase):
         # convert to string with milliseconds stripped for test comparison
         expected_datetime_utc_str = expected_datetime_utc.strftime(
             '%Y-%m-%d %H:%M:%S')
-        fake_change = fetcher._do_pull(self.HOST_NAME, self.PORT,
-                                       self.MAX_DAYS, 0)
+        fake_change = fetcher._do_pull(self.HOST_NAME, self.USER_NAME,
+                                       self.PORT, self.MAX_DAYS, 0)
         self.assertEqual(self.found_hostname, self.HOST_NAME,
                          "Expected %s, found %s" % (self.HOST_NAME,
                                                     self.found_hostname))
+        self.assertEqual(self.found_username, self.USER_NAME,
+                         "Expected %s, found %s" % (self.USER_NAME,
+                                                    self.found_username))
         self.assertEqual(self.found_datetime_str, expected_datetime_utc_str,
                          "Expected %s, found %s" % (expected_datetime_utc_str,
                                                     self.found_datetime_str))

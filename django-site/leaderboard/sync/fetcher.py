@@ -19,13 +19,14 @@ CONFIG_FILE_SECTION = "fetch"
 fetch_after_datetime_utc = None
 
 
-def _do_pull(hostname, port, max_days, skip):
+def _do_pull(hostname, username, port, max_days, skip):
     """Pull changes from gerrit that are not in database
 
     Pull changes from gerrit created after change last saved into
     database, limited to a maximum time period of max_days
 
     :arg str hostname: gerrit server hostname
+    :arg str username: gerrit username (SSH public key configured on server)
     :arg int port: port for gerrit service
     :arg int max_days: maximum number of days of outstanding changes
         to pull
@@ -69,12 +70,14 @@ def _do_pull(hostname, port, max_days, skip):
                 # fetch all changes since last fetched change
                 fetch_after_datetime_utc = last_synced_change_datetime_utc
 
-    return fetch.fetch_changes(hostname, fetch_after_datetime_utc,
+    return fetch.fetch_changes(hostname, username,
+                               fetch_after_datetime_utc,
                                port, skip)
 
 
 def _create_default_config_file(config):
     config[CONFIG_FILE_SECTION] = {'hostname': 'gerrit.myhost.com',
+                                   'username': 'gerritleaderboard',
                                    'port': '29418',
                                    'maxdays': '180'}
     # write config file
@@ -102,23 +105,24 @@ def pull_and_store_changes():
         config = _create_default_config_file(config)
 
     hostname = config[CONFIG_FILE_SECTION]['hostname']
+    username = config[CONFIG_FILE_SECTION]['username']
     port = int(config[CONFIG_FILE_SECTION]['port'])
     max_days = int(config[CONFIG_FILE_SECTION]['maxdays'])
     logging.info(
-        "Loaded hostname: %s port: %d max_days: %d from %s",
-        hostname, port, max_days, CONFIG_FILE_PATH)
+        "Loaded hostname: %s username: %s port: %d max_days: %d from %s",
+        hostname, username, port, max_days, CONFIG_FILE_PATH)
     # reset any previous fetches and continuations
     global fetch_after_datetime_utc
     fetch_after_datetime_utc = None
     # pull and store changes, MAX_CHANGES_FETCH_COUNT at a time
     skip = 0
-    gerrit_changes = _do_pull(hostname, port, max_days, skip)
+    gerrit_changes = _do_pull(hostname, username, port, max_days, skip)
     while gerrit_changes:
         # update database
         database_helper.update(gerrit_changes)
         # there might be more changes, skip already fetched changes and try
         # again
         skip += len(gerrit_changes)
-        gerrit_changes = _do_pull(hostname, port, max_days, skip)
+        gerrit_changes = _do_pull(hostname, username, port, max_days, skip)
 
     logging.info("Fetched a total of %d changes", skip)

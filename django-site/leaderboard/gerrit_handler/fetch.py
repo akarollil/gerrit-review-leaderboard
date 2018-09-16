@@ -4,7 +4,6 @@
 
 import calendar
 from datetime import datetime, timedelta
-import getpass
 import logging
 import sys
 
@@ -15,11 +14,6 @@ from pygerrit.error import GerritError
 # for the maximum number of changes that can be fetched at a time via gerrit's
 # SSH API
 MAX_CHANGES_FETCH_COUNT = 500
-
-
-def _find_user_name():
-    """Find user name of current user."""
-    return getpass.getuser()
 
 
 def _fetch(gerrit_client, datetime_utc, skip):
@@ -67,16 +61,18 @@ def _fetch(gerrit_client, datetime_utc, skip):
     return changes
 
 
-def fetch_changes(hostname, datetime_utc, port=29418, skip=None):
+def fetch_changes(hostname, username, datetime_utc, port=29418, skip=None):
     """Fetch merged changes from gerrit after timestamp.
 
-    Connects to gerrit at given hostname via SSH and uses gerrit query
-    to fetch all changes merged after given datetime, limited to 500
-    changes. If query result has more than 500 changes, skip parameter
+    Connects to gerrit at given hostname with given username via SSH and uses
+    gerrit query to fetch all changes merged after given datetime, limited to
+    500 changes. If query result has more than 500 changes, skip parameter
     can be used to specify count of already fetched changes (newest) to
-    skip. Expects current user to have public key.
+    skip. Expects given username's public key on current system to have been
+    installed on host with given hostname.
 
     :arg str hostname: gerrit server hostname
+    :arg str username: gerrit username
     :arg datetime.datetime datetime_utc: datetime obj specifying time
          in UTC, changes fetched should have been merged after time
          specified
@@ -85,8 +81,6 @@ def fetch_changes(hostname, datetime_utc, port=29418, skip=None):
 
     :Return: List of Change objects if any, empty list otherwise
     """
-    # get current user name
-    username = _find_user_name()
     try:
         logging.info("Connecting to %s@%s:%d", username, hostname, port)
         gerrit_client = GerritClient(host=hostname,
@@ -109,7 +103,7 @@ def _main():
     timestamp = calendar.timegm(day_before_datetime_utc.timetuple())
     local_time = datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
     logging.info("Fetching changes since %s", local_time)
-    fetch_changes("gerrit.myhost.com", day_before_datetime_utc)
+    fetch_changes("gerrit.myhost.com", "anonymous", day_before_datetime_utc)
 
 
 if __name__ == "__main__":
