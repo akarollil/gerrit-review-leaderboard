@@ -11,6 +11,7 @@ from pygerrit.models import Change as GerritChange
 from pygerrit.models import Comment as GerritComment
 
 from . import views
+from . current_load import current_load_fetcher
 from . models import Change
 from . models import Comment
 from . models import Reviewer
@@ -380,6 +381,8 @@ class TestFetcher(TestCase):
         self._assert_fetch_params(ten_days_ago_datetime_utc)
 
     def test_do_pull_with_really_old_existing_change(self):
+        # test that with a change older than MAX_DAYS, fetch still happens
+        # only for changes up to MAX_DAYS prior to now
         max_days_ago_datetime_utc = datetime.utcnow(
         ) - timedelta(days=self.MAX_DAYS)
         # a change more than MAX_DAYS days ago
@@ -428,7 +431,150 @@ class TestFetcher(TestCase):
         self._assert_skip_params_used([0, 500, 1000, 1100])
 
 
+class TestCurrentLoadFetcher(TestCase):
+    # Mocks changes to be returned from mock gerrit fetch
+    changes = []
+
+    def _mock_fetch(self, hostname, username, port=29418):
+        return self.changes
+
+    def setUp(self):
+        # mock out gerrit fetch
+        self.saved_fetch_method = fetcher.fetch.fetch_open_changes
+        fetcher.fetch.fetch_open_changes = self._mock_fetch
+
+    def tearDown(self):
+        # unmock gerrit fetch
+        fetcher.fetch.fetch_open_changes = self.saved_fetch_method
+
+    def _make_gerrit_change(self, project, reviewers):
+        gerrit_change = GerritChange([])
+        for reviewer_name in reviewers:
+            reviewer = Account([])
+            reviewer.name = reviewer_name
+            gerrit_change.reviewers.append(reviewer)
+        gerrit_change.project = project
+        return gerrit_change
+
+    def _make_open_changes(self, changes_specs):
+        """ Returns a list of changes based on given change specifications
+
+        :arg list change_specs: A list of specs for changes to be created.
+            Each spec is a list with first element as project name and second
+            element as a list of reviewers
+        """
+        changes = []
+        for change_spec in changes_specs:
+            project_name = change_spec[0]
+            reviewers = change_spec[1]
+            change = self._make_gerrit_change(project_name, reviewers)
+            changes.append(change)
+        return changes
+
+    def _test_current_load_fetcher(self, changes, expected_dic):
+        self.changes = changes
+        found_dic = current_load_fetcher.get_open_change_reviewers_per_project()
+        self.assertDictEqual(expected_dic, found_dic)
+
+    def test_no_open_changes(self):
+        self._test_current_load_fetcher([], {})
+
+    def test_one_change_one_reviewer(self):
+        changes = self._make_open_changes([
+            ["project-a", ["Reviewer XYZ"]]
+        ])
+        self._test_current_load_fetcher(changes, {
+            "project-a": {
+                "Reviewer XYZ": 1
+            }
+        }
+        )
+
+    def test_multiple_projects_multiple_reviewers(self):
+        # a project with 2 open changes with the same reviewer
+        changes = self._make_open_changes([
+                                          ["project-a", ["Reviewer X"]],
+                                          ["project-a", ["Reviewer X"]]
+                                          ])
+        self._test_current_load_fetcher(changes, {
+            "project-a": {
+                "Reviewer X": 2
+            }
+        }
+        )
+        # two projects with one open change each with the same reviewer
+        changes = self._make_open_changes([
+                                          ["project-a", ["Reviewer X"]],
+                                          ["project-b", ["Reviewer X"]]
+                                          ])
+        self._test_current_load_fetcher(changes, {
+            "project-a": {
+                "Reviewer X": 1
+            },
+            "project-b": {
+                "Reviewer X": 1
+            }
+        }
+        )
+        # a project with 2 open changes with 3 reviewers, one in both
+        changes = self._make_open_changes([
+                                          ["project-a", ["Reviewer X",
+                                                         "Reviewer Y"]],
+                                          ["project-a", ["Reviewer X",
+                                                         "Reviewer Z"]]
+                                          ])
+        self._test_current_load_fetcher(changes, {
+            "project-a": {
+                "Reviewer X": 2,
+                "Reviewer Y": 1,
+                "Reviewer Z": 1
+            }
+        }
+        )
+        # two projects with 5 open changes, two with no reviewers
+        changes = self._make_open_changes([
+                                          ["project-a", ["Reviewer X",
+                                                         "Reviewer Y"]],
+                                          ["project-b", ["Reviewer X",
+                                                         "Reviewer Y",
+                                                         "Reviewer Z"]],
+                                          ["project-b", []],
+                                          ["project-a", ["Reviewer Z",
+                                                         "Reviewer A"]],
+                                          ["project-a", ["Reviewer A"]]
+                                          ])
+        self._test_current_load_fetcher(changes, {
+            "project-a": {
+                "Reviewer A": 2,
+                "Reviewer X": 1,
+                "Reviewer Y": 1,
+                "Reviewer Z": 1
+            },
+            "project-b": {
+                "Reviewer X": 1,
+                "Reviewer Y": 1,
+                "Reviewer Z": 1
+            }
+        }
+        )
+
+
 class TestView(TestCase):
+    # Mocks dictionary returned by mock open changes fetcher
+    _mock_open_change_reviewers_per_project = {}
+
+    def setUp(self):
+        self._saved_curr_load_fetcher = \
+            current_load_fetcher.get_open_change_reviewers_per_project
+        current_load_fetcher.get_open_change_reviewers_per_project = \
+            self._mock_get_open_change_reviewers_per_project
+
+    def tearDown(self):
+        current_load_fetcher.get_open_change_reviewers_per_project = \
+            self._saved_curr_load_fetcher
+
+    def _mock_get_open_change_reviewers_per_project(self):
+        return self._mock_open_change_reviewers_per_project
 
     def _assert_time_period_list(self, expected_list, found_list):
         index = 0
@@ -746,7 +892,66 @@ class TestView(TestCase):
         ]
         self._assert_reviewers(projectc, "6 Months", expected_reviewers)
 
+    def _compare_dic_list(self, expected_list, found_list):
+        self.assertEqual(len(expected_list),
+                         len(found_list),
+                         "Expected %d reviewers, found %d" %
+                         (len(expected_list), len(found_list)))
+        for expected_dic in expected_list:
+            found = False
+            for found_dic in found_list:
+                if found_dic == expected_dic:
+                    found = True
+                    break
+            if not found:
+                self.fail("Expected reviewer info %r not found in %r" %
+                          (expected_dic, found_list))
 
+    def test_get_current_reviewers_and_counts(self):
+        self._mock_open_change_reviewers_per_project = {
+            "project-a": {
+                "Reviewer A": 2,
+                "Reviewer X": 1,
+                "Reviewer Y": 1,
+                "Reviewer Z": 1
+            },
+            "project-b": {
+                "Reviewer X": 1,
+                "Reviewer Y": 1,
+                "Reviewer Z": 1
+            }
+        }
+        reviewer_count_info = views._get_current_reviewers_and_counts(
+            "project-a")
+        expected_project_a_info = [
+            {"name": "Reviewer A", "review_count": 2},
+            {"name": "Reviewer X", "review_count": 1},
+            {"name": "Reviewer Y", "review_count": 1},
+            {"name": "Reviewer Z", "review_count": 1}
+        ]
+        self._compare_dic_list(reviewer_count_info, expected_project_a_info)
+
+        expected_project_b_info = [
+            {"name": "Reviewer X", "review_count": 1},
+            {"name": "Reviewer Y", "review_count": 1},
+            {"name": "Reviewer Z", "review_count": 1}
+        ]
+        reviewer_count_info = views._get_current_reviewers_and_counts(
+            "project-b")
+        self._compare_dic_list(reviewer_count_info, expected_project_b_info)
+
+        expected_project_all_info = [
+            {"name": "Reviewer A", "review_count": 2},
+            {"name": "Reviewer X", "review_count": 2},
+            {"name": "Reviewer Y", "review_count": 2},
+            {"name": "Reviewer Z", "review_count": 2}
+        ]
+        reviewer_count_info = views._get_current_reviewers_and_counts(
+            views.PROJECT_ALL)
+        self._compare_dic_list(reviewer_count_info, expected_project_all_info)
+
+
+'''
 class TestSystem(TestCase):
 
     def test_fetch_and_store(self):
@@ -755,3 +960,4 @@ class TestSystem(TestCase):
         fetcher.MAX_DAYS = 1
         fetcher.pull_and_store_changes()
         dump_db()
+'''

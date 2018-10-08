@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from django.shortcuts import render
 import logging
 
+from leaderboard.current_load import current_load_fetcher
+
 from .models import Reviewer, Change
 from .sync import fetcher
 
@@ -227,6 +229,66 @@ def _get_reviewers_and_counts(project_name, from_datetime):
     return reviewers_info
 
 
+def _create_reviewer_current_change_count_info(reviewers_changes_counts):
+    reviewer_current_change_info = []
+    for reviewer_name, count in reviewers_changes_counts.items():
+        reviewer_current_change_info.append(
+            {
+                "name": reviewer_name,
+                "review_count": count
+            })
+    return reviewer_current_change_info
+
+
+def _get_current_change_counts_across_projects(
+        reviewer_change_count_per_project):
+    reviewers_change_counts = {}
+    for project_name in reviewer_change_count_per_project:
+        reviewer_change_count_info = \
+            reviewer_change_count_per_project[project_name]
+        for reviewer_name, count in reviewer_change_count_info.items():
+            if reviewer_name in reviewers_change_counts:
+                reviewers_change_counts[reviewer_name] += count
+            else:
+                reviewers_change_counts[reviewer_name] = count
+    return reviewers_change_counts
+
+
+def _get_current_reviewers_and_counts(project_name):
+    """Returns reviewers with their change count
+
+    Gets reviewers for all current changes with a count of changes open per
+    reviewer
+
+    :arg str project_name: filter list of reviewers to be only those with
+        changes in the corresponding project
+
+    :Return: A list of reviewer info dictionaries containing reviewer "name",
+    and "review_count" representing open changes for the reviewer
+    """
+    reviewer_change_count_per_project = current_load_fetcher.\
+        get_open_change_reviewers_per_project()
+
+    if project_name not in reviewer_change_count_per_project and \
+            project_name != PROJECT_ALL:
+        logging.warning("Project %s does not have any current reviewers",
+                        project_name)
+        return []
+
+    if project_name == PROJECT_ALL:
+        # go through all projects and combine open change counts for each
+        # reviewer
+        reviewers_changes_counts = \
+            _get_current_change_counts_across_projects(
+                reviewer_change_count_per_project
+            )
+    else:
+        reviewers_changes_counts = \
+            reviewer_change_count_per_project[project_name]
+
+    return _create_reviewer_current_change_count_info(reviewers_changes_counts)
+
+
 def index(request):
     # fetch outstanding changes, up to a configured maximum specified in
     # ../fetcher.cfg
@@ -252,10 +314,15 @@ def index(request):
     # time choices
     time_period_list = _get_time_periods(time_period)
 
+    # current reviewers with open changes
+    current_reviewers_info_list = _get_current_reviewers_and_counts(
+        project_name)
+
     context = {
         'reviewers': reviewers_info_list,
         'projects': project_list,
-        'time_periods': time_period_list
+        'time_periods': time_period_list,
+        'current_reviewers': current_reviewers_info_list
     }
 
     return render(request, 'leaderboard/index.html', context)

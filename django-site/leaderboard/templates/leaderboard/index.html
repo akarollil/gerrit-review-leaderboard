@@ -19,19 +19,19 @@
 </form>
 
 {% block extra_head %}
-{% if reviewers %}
 <script type="text/javascript" charset="utf-8" src="{% static "leaderboard/jquery-2.2.0.min.js" %}"></script>
 <script type="text/javascript" charset="utf-8" src="{% static "leaderboard/jquery.tablesorter.min.js" %}"></script>
 <link rel="stylesheet" href="{% static "leaderboard/tablesorter/style.css" %}" type="text/css" media="screen" charset="utf-8" />
 <script type="text/javascript" charset="utf-8">
     $(document).ready(function() {
         $("#reviewers").tablesorter( {sortList: [[1,1], [2,1]]} );
+        $("#current_reviewers").tablesorter( {sortList: [[1,1]]} );
     });
 </script>
-{% endif %}
 {% endblock %}
 
-{% block content %}
+<h3 align="left">Merged Changes</h2>
+{% block merged-content %}
 {% if reviewers %}
 <table id="reviewers" class="tablesorter">
 <thead>
@@ -52,6 +52,30 @@
 </tbody>
 </table>
 {% else %}
-    <p align="center">No reviewers found.</p>
+    <p align="left">No reviewers found</p>
+{% endif %}
+{% endblock %}
+
+<h3 align="left">Open Changes</h2>
+{% block open-content %}
+{% if current_reviewers %}
+<table id="current_reviewers" class="tablesorter">
+<thead>
+    <tr>
+        <th>Reviewer Name</th>
+        <th>Reviews</th>
+    </tr>
+</thead>
+<tbody>
+    {% for reviewer in current_reviewers %}
+    <tr>
+        <td>{{reviewer.name}}</td>
+        <td>{{reviewer.review_count}}</td>
+    </tr>
+    {% endfor %}
+</tbody>
+</table>
+{% else %}
+    <p align="left">No reviewers found</p>
 {% endif %}
 {% endblock %}
