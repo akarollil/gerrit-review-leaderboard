@@ -55,12 +55,16 @@ def _ignore_comment(gerrit_change, gerrit_comment):
     :arg pygerrit.models.Comment gerrit_comment: Comment to be checked
     :Returns: True if comment should be ignored, False otherwise
     """
-    reviewer_name = gerrit_comment.reviewer.name
+    # reviewer might not have a name, but will have a username
+    reviewer_name = (
+        gerrit_comment.reviewer.name if gerrit_comment.reviewer.name
+        else gerrit_comment.reviewer.username)
     # ignore Jenkins Build or Gerrit Code Review comments
     if "Jenkins" in reviewer_name or "Gerrit" in reviewer_name:
         return True
     # ignore change owner comments (replies)
-    if gerrit_change.owner.name == reviewer_name:
+    if gerrit_change.owner.name == reviewer_name or \
+            gerrit_change.owner.username == reviewer_name:
         return True
     # ignore comments that are just +1s or +2s
     if "Code-Review+1" in gerrit_comment.message or \
@@ -90,10 +94,15 @@ def update(gerrit_changes):
             continue
         change_timestamp = convert_to_utc_datetime(
             gerrit_change.last_update_timestamp)
+
+        # owner might not have a name, but will have a username
+        owner = (
+            gerrit_change.owner.name if gerrit_change.owner.name
+            else gerrit_change.owner.username)
         # create change
         change = Change(
             timestamp=change_timestamp,
-            owner_full_name=gerrit_change.owner.name,
+            owner_full_name=owner,
             subject=gerrit_change.subject,
             project_name=gerrit_change.project,
             change_id=gerrit_change.change_id
@@ -114,7 +123,11 @@ def update(gerrit_changes):
                 change=change)
             comment.save()
             # get reviewer, creating if necessary
-            reviewer = _get_or_create_reviewer(gerrit_comment.reviewer.name)
+            # reviewer might not have a name, but will have a username
+            reviewer_name = (
+                gerrit_comment.reviewer.name if gerrit_comment.reviewer.name
+                else gerrit_comment.reviewer.username)
+            reviewer = _get_or_create_reviewer(reviewer_name)
             # link comment to reviewer
             reviewer.comments.add(comment)
             # link change to reviewer (change already linked will just get
