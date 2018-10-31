@@ -271,38 +271,66 @@ class TestDatabaseHelper(TestCase):
 
 
 class TestFetcher(TestCase):
+    """ Tests that the initial fetch is based on any existing change's
+    timestamp, and that all changes are fetched in chunks.
+    """
     HOST_NAME = "gerrit.myserver.com"
     PORT = 12345
     MAX_DAYS = 30
-    FAKE_CHANGE = "Fake change"
+    # not testing processing of changes returned, so this can be anything
+    FAKE_CHANGES = ["Fake change"]
     found_hostname = None
     found_datetime_str = None
     found_port = None
     saved_fetch_method = None
+    # lists of fake changes for testing looped fetch
+    multiple_fetch_changes = []
+    # index used to return a set of mock changes in multiple_fetch_changes
+    fetch_count = 0
+    # to keep tab of skip params used for multiple fetch changes testing
+    skip_params_used = []
 
-    def _mock_fetch(self, hostname, datetime_utc, port):
-        """Mocks gerrit_handler.fetch()
+    def _mock_fetch(self, hostname, datetime_utc, port, skip):
+        """Mocks fetch.fetch_changes()
         """
         self.found_hostname = hostname
         # convert to string with second precision for test comparison
         self.found_datetime_str = datetime_utc.strftime('%Y-%m-%d %H:%M:%S')
         self.found_port = port
-        return self.FAKE_CHANGE
+        if self.multiple_fetch_changes:
+            # store for validation by test
+            self.skip_params_used.append(skip)
+            # testing looped fetch of changes
+            self.fetch_count += 1
+            # return a set of changes
+            return self.multiple_fetch_changes[self.fetch_count - 1]
+        else:
+            # testing just a single fetch' change
+            return self.FAKE_CHANGES
+
+    def _mock_database_helper_update(self, gerrit_changes):
+        pass
 
     def setUp(self):
         # mock out gerrit fetch
         self.saved_fetch_method = fetcher.fetch.fetch_changes
         fetcher.fetch.fetch_changes = self._mock_fetch
+        # mock out database helper update
+        self.saved_database_helper_update = fetcher.database_helper.update
+        fetcher.database_helper.update = self._mock_database_helper_update
 
     def tearDown(self):
         # unmock gerrit fetch
         fetcher.fetch.fetch_changes = self.saved_fetch_method
+        # unmock database helper update
+        fetcher.database_helper.update = self.saved_database_helper_update
 
     def _assert_fetch_params(self, expected_datetime_utc):
         # convert to string with milliseconds stripped for test comparison
         expected_datetime_utc_str = expected_datetime_utc.strftime(
             '%Y-%m-%d %H:%M:%S')
-        fake_change = fetcher._do_pull(self.HOST_NAME, self.PORT, self.MAX_DAYS)
+        fake_change = fetcher._do_pull(self.HOST_NAME, self.PORT,
+                                       self.MAX_DAYS, 0)
         self.assertEqual(self.found_hostname, self.HOST_NAME,
                          "Expected %s, found %s" % (self.HOST_NAME,
                                                     self.found_hostname))
@@ -312,8 +340,8 @@ class TestFetcher(TestCase):
         self.assertEqual(self.found_port, self.PORT,
                          "Expected %s, found %s" % (self.PORT,
                                                     self.found_port))
-        self.assertEqual(self.FAKE_CHANGE, fake_change,
-                         "Expected %s, found %s" % (self.FAKE_CHANGE,
+        self.assertEqual(self.FAKE_CHANGES, fake_change,
+                         "Expected %s, found %s" % (self.FAKE_CHANGES,
                                                     fake_change))
 
     def test_do_pull_no_existing_changes(self):
@@ -353,6 +381,41 @@ class TestFetcher(TestCase):
         change.save()
 
         self._assert_fetch_params(max_days_ago_datetime_utc)
+
+    def _assert_skip_params_used(self, expected_skip_params):
+        found_fetch_call_count = len(self.skip_params_used)
+        expected_fetch_call_count = len(expected_skip_params)
+        # assert count of fetch calls made (count of skip params used)
+        self.assertEqual(expected_fetch_call_count, found_fetch_call_count,
+                         "Expected %d fetch calls, found %d" %
+                         (expected_fetch_call_count, found_fetch_call_count))
+        # assert skip param values
+        for index in range(0, expected_fetch_call_count):
+            self.assertEqual(
+                self.skip_params_used[index],
+                expected_skip_params[index],
+                "Expected skip param for fetch call number %d to be %d, "
+                "found %d" %
+                (index + 1, self.skip_params_used[index],
+                 expected_skip_params[index]))
+
+    def test_looping_fetch(self):
+        """Test that fetcher fetches all changes with queries that skip any
+        changes already fetched
+        """
+        # mock return of one set of changes, followed by an empty set
+        self.multiple_fetch_changes = [range(0, 100), []]
+        fetcher.pull_and_store_changes()
+        self._assert_skip_params_used([0, 100])
+
+        # reset skip params, fetch count
+        self.skip_params_used = []
+        self.fetch_count = 0
+        # test fetch returns of 500, 500, 100 and then nothing
+        self.multiple_fetch_changes = [range(0, 500), range(0, 500),
+                                       range(0, 100), []]
+        fetcher.pull_and_store_changes()
+        self._assert_skip_params_used([0, 500, 1000, 1100])
 
 
 class TestView(TestCase):

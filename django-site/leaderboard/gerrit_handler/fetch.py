@@ -11,24 +11,30 @@ import sys
 from pygerrit.client import GerritClient
 from pygerrit.error import GerritError
 
+# the maximum number of changes to fetch at a time. 500 seems to be the limit
+# for the maximum number of changes that can be fetched at a time via gerrit's
+# SSH API
+MAX_CHANGES_FETCH_COUNT = 500
+
 
 def _find_user_name():
     """Find user name of current user."""
     return getpass.getuser()
 
 
-def fetch_changes(hostname, datetime_utc, port=29418):
-    """Fetch merged changes from gerrit after timestamp.
+def _fetch(gerrit_client, datetime_utc, skip):
+    """Fetch changes starting from a certain date
 
-    Connects to gerrit at given hostname via SSH and uses gerrit query
-    to fetch all changes merged after given datetime. Expects current
-    user to have public key.
+    Use gerrit_client to fetch changes starting from datetime_utc but
+    limited to MAX_CHANGES_FETCH_COUNT changes, skipping changes if
+    skip is specified, starting at the newest change
 
-    :arg str hostname: gerrit server hostname
+    :arg pygerrit.client.GerritClient gerrit_client: Gerrit SSH client
+        for use in fetching changes
     :arg datetime.datetime datetime_utc: datetime obj specifying time
-         in UTC, changes fetched should have been merged after time
-         specified
-    :arg int port: port for gerrit service
+        in UTC, changes fetched should have been merged after time
+        specified
+    :arg int skip: count of changes to skip starting from newest
 
     :Return: List of Change objects if any, empty list otherwise
     """
@@ -43,32 +49,56 @@ def fetch_changes(hostname, datetime_utc, port=29418):
     gerrit_query_time_format = "%Y-%m-%d"
     # since we can't specify timezone, the query date is in UTC
     time_utc_str = datetime_utc.strftime(gerrit_query_time_format)
-    fetch_query = "status:merged after:%s" % time_utc_str
-    # for limiting changes during testing
-    # fetch_query += " limit:80"
-    # get current user name
-    username = _find_user_name()
-    try:
-        logging.info("Connecting to %s@%s:%d", username, hostname, port)
-        gerrit = GerritClient(host=hostname,
-                              username=username,
-                              port=port)
-        logging.info("Connected to Gerrit version [%s]",
-                     gerrit.gerrit_version())
-    except GerritError as err:
-        logging.error("Gerrit error: %s", err)
-        return []
+    fetch_query = "status:merged after:%s limit:%d" % (
+        time_utc_str, MAX_CHANGES_FETCH_COUNT)
+
+    if skip:
+        fetch_query += " -S %d" % skip
 
     logging.info("Fetching changes with %s", fetch_query)
     changes = []
     try:
-        changes = gerrit.query(fetch_query)
+        changes = gerrit_client.query(fetch_query)
     except ValueError as value_error:
         # should not happen as query above should have no errors
         logging.error("Query %s failed: %s", fetch_query, value_error)
 
     logging.info("Number of changes fetched: %d", len(changes))
     return changes
+
+
+def fetch_changes(hostname, datetime_utc, port=29418, skip=None):
+    """Fetch merged changes from gerrit after timestamp.
+
+    Connects to gerrit at given hostname via SSH and uses gerrit query
+    to fetch all changes merged after given datetime, limited to 500
+    changes. If query result has more than 500 changes, skip parameter
+    can be used to specify count of already fetched changes (newest) to
+    skip. Expects current user to have public key.
+
+    :arg str hostname: gerrit server hostname
+    :arg datetime.datetime datetime_utc: datetime obj specifying time
+         in UTC, changes fetched should have been merged after time
+         specified
+    :arg int port: port for gerrit service
+    :arg int skip: count of changes to skip starting from newest
+
+    :Return: List of Change objects if any, empty list otherwise
+    """
+    # get current user name
+    username = _find_user_name()
+    try:
+        logging.info("Connecting to %s@%s:%d", username, hostname, port)
+        gerrit_client = GerritClient(host=hostname,
+                                     username=username,
+                                     port=port)
+        logging.info("Connected to Gerrit version [%s]",
+                     gerrit_client.gerrit_version())
+    except GerritError as err:
+        logging.error("Gerrit error: %s", err)
+        return []
+
+    return _fetch(gerrit_client, datetime_utc, skip)
 
 
 def _main():
