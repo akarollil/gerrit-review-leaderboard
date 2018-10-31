@@ -10,11 +10,30 @@ from pygerrit.models import Account
 from pygerrit.models import Change as GerritChange
 from pygerrit.models import Comment as GerritComment
 
+from . import views
 from . models import Change
 from . models import Comment
 from . models import Reviewer
 from . sync import database_helper
 from . sync import fetcher
+
+
+def dump_db(file_name="dbdump.txt"):
+    from django.core.serializers import serialize
+    reviewers = Reviewer.objects.all()
+    changes = Change.objects.all()
+    comments = Comment.objects.all()
+    reviewers_json = serialize('json', list(reviewers))
+    changes_json = serialize('json', list(changes))
+    comments_json = serialize('json', list(comments))
+    f = open(file_name, 'w')
+    f.write("REVIEWERS:\n")
+    f.write(reviewers_json)
+    f.write("\n\nCHANGES:\n")
+    f.write(changes_json)
+    f.write("\n\nCOMMENTS:\n")
+    f.write(comments_json)
+    f.close()
 
 
 class TestDatabaseHelper(TestCase):
@@ -336,6 +355,325 @@ class TestFetcher(TestCase):
         self._assert_fetch_params(max_days_ago_datetime_utc)
 
 
+class TestView(TestCase):
+
+    def _assert_time_period_list(self, expected_list, found_list):
+        index = 0
+        for expected_time_period in expected_list:
+            found_time_period = found_list[index]
+            self.assertEqual(
+                expected_time_period,
+                found_time_period,
+                "Expected %s at %d, found %s" %
+                (expected_time_period,
+                 index,
+                 found_time_period))
+            index += 1
+
+    def test_get_time_periods_no_current_selection(self):
+        time_periods = views._get_time_periods()
+        expected_list = ["1 Week", "1 Month", "3 Months", "6 Months"]
+        self._assert_time_period_list(expected_list, time_periods)
+
+    def test_get_time_periods_with_selection(self):
+        time_periods = views._get_time_periods("3 Months")
+        expected_list = ["3 Months", "1 Week", "1 Month", "6 Months"]
+        self._assert_time_period_list(expected_list, time_periods)
+
+    def test_get_time_periods_invalid_selection(self):
+        time_periods = views._get_time_periods("Invalid time period")
+        expected_list = ["1 Week", "1 Month", "3 Months", "6 Months"]
+        self._assert_time_period_list(expected_list, time_periods)
+
+    def _assert_start_datetime(self, time_period, end_datetime,
+                               expected_start_datetime):
+        found_start_datetime = views._get_start_datetime_for_time_period(
+            time_period, end_datetime)
+        self.assertEqual(expected_start_datetime, found_start_datetime,
+                         "Expected %s found %s" % (expected_start_datetime,
+                                                   found_start_datetime))
+
+    def test_get_start_datetime_for_time_period(self):
+        end_datetime = datetime(2016, 2, 23)
+        # one week ago
+        self._assert_start_datetime("1 Week", end_datetime,
+                                    datetime(2016, 2, 16))
+        # one month ago
+        self._assert_start_datetime("1 Month", end_datetime,
+                                    datetime(2016, 1, 24))
+        # 3 months ago
+        self._assert_start_datetime("3 Months", end_datetime,
+                                    datetime(2015, 11, 25))
+        # 6 months ago
+        self._assert_start_datetime("6 Months", end_datetime,
+                                    datetime(2015, 8, 27))
+
+        # invalid time period should default to 1 Month default
+        self._assert_start_datetime("Invalid time period", end_datetime,
+                                    datetime(2016, 1, 24))
+
+    def _create_change(self, change_id, project_name,
+                       timestamp=datetime.utcnow()):
+        change = Change()
+        change.change_id = "test-change-id-" + str(change_id)
+        change.owner_full_name = "John Smith"
+        change.project_name = project_name
+        change.subject = "A test commit"
+        change.timestamp = timestamp
+        change.save()
+        return change
+
+    def _create_changes_with_projects(self, project_list):
+        index = 0
+        for project_name in project_list:
+            self._create_change(index, project_name)
+            index += 1
+
+    def _test_get_projects(self, project_names, current_project_name,
+                           expected_project_list):
+        self._create_changes_with_projects(project_names)
+        found_project_list = views._get_projects(current_project_name)
+        # verify project name count
+        expected_list_len = len(project_names) + 1  # +1 for 'all'
+        found_list_len = len(found_project_list)
+        self.assertEqual(found_list_len, expected_list_len,
+                         "Expected project list of length %d, found %d" %
+                         (expected_list_len, found_list_len))
+        # verify project names found in the right order
+        index = 0
+        for found_project_name in found_project_list:
+            expected_project_name = expected_project_list[index]
+            self.assertEqual(
+                found_project_name,
+                expected_project_list[index],
+                "Expected %s at %d, found %s" %
+                (expected_project_name,
+                 index,
+                 found_project_name))
+            index += 1
+
+    def test_get_projects_current_project_all(self):
+        project_names = ["foo", "bar", "biz", "acme"]
+        expected_project_list = [views.PROJECT_ALL, "acme", "bar", "biz", "foo"]
+        self._test_get_projects(project_names, views.PROJECT_ALL,
+                                expected_project_list)
+
+    def test_get_projects_current_project_invalid(self):
+        project_names = ["foo", "bar", "biz", "acme"]
+        expected_project_list = [views.PROJECT_ALL, "acme", "bar", "biz", "foo"]
+        self._test_get_projects(project_names, "invalid_current_project",
+                                expected_project_list)
+
+    def test_get_projects_current_project_bar(self):
+        project_names = ["foo", "bar", "biz", "acme"]
+        expected_project_list = ["bar", views.PROJECT_ALL, "acme", "biz", "foo"]
+        self._test_get_projects(project_names, "bar",
+                                expected_project_list)
+
+    def test_get_projects_current_project_foo(self):
+        project_names = ["foo", "bar", "acme", "biz"]
+        expected_project_list = ["foo", views.PROJECT_ALL, "acme", "bar", "biz"]
+        self._test_get_projects(project_names, "foo",
+                                expected_project_list)
+
+    def _create_reviewer(self, reviewer_name, changes, comments):
+        reviewer = Reviewer()
+        reviewer.full_name = reviewer_name
+        reviewer.save()
+        reviewer.comments.add(*comments)
+        reviewer.changes.add(*changes)
+        reviewer.save()
+
+    def _create_comment(self, mock_change):
+        comment = Comment()
+        comment.timestamp = datetime.utcnow()
+        comment.message = "This is a test comment"
+        # comment change link doesn't affect the view in any way, but is needed
+        # by the model
+        comment.change = mock_change
+        comment.save()
+        return comment
+
+    def _create_comments(self, mock_change, count):
+        comments = []
+        for _ in range(0, count):
+            comments.append(self._create_comment(mock_change))
+        return comments
+
+    def _create_changes(self, project_name, age_in_days, count):
+        changes = []
+        age_in_datetime_utc = datetime.utcnow() - timedelta(days=age_in_days)
+        for index in range(0, count):
+            change_id = "%s-%s-%d" % (project_name, age_in_days, index)
+            change = self._create_change(change_id, project_name,
+                                         age_in_datetime_utc)
+            changes.append(change)
+        return changes
+
+    def _assert_reviewers(self, project_name, time_period, expected_reviewers):
+        """Asserts list of reviewer changes and comment counts
+
+        :arg: str project_name: project name for filtering reviewers
+        :arg: str time_period: time period specified as one of
+            views.SORTED_TIME_PERIODS.keys()
+        :arg: list expected_reviewers: a list of expected reviewer info
+        """
+        time_period_start_datetime = views._get_start_datetime_for_time_period(
+            time_period)
+        found_reviewers = views._get_reviewers_and_counts(
+            project_name,
+            time_period_start_datetime)
+
+        self.assertEqual(
+            len(expected_reviewers),
+            len(found_reviewers),
+            "Expected %d reviewers, found %d \n Expected: %r\n Found: %r" %
+            (len(expected_reviewers),
+             len(found_reviewers),
+                expected_reviewers,
+                found_reviewers))
+
+        for reviewer_info in found_reviewers:
+            self.assertTrue(
+                reviewer_info in expected_reviewers,
+                "Reviewer info %r not found in expected reviewers %r" %
+                (reviewer_info,
+                 expected_reviewers))
+
+    def test_get_reviewers_and_counts(self):
+        """Test reviewers with changes with varying ages and in multiple
+        projects and with comments
+        """
+        projecta = "project-a"
+        projectb = "project-b"
+        projectc = "project-c"
+        # mock change for comments
+        mock_change = self._create_change("mock_change", projecta)
+        # 5 changes in project-a, a day old
+        five_changes_projecta_day_old = self._create_changes(projecta, 1, 5)
+        # 3 changes in project-a, more than two weeks old
+        three_changes_projecta_two_weeks_old = self._create_changes(projecta,
+                                                                    14,
+                                                                    3)
+        # 2 changes in project-b, a day old
+        two_changes_projectb_day_old = self._create_changes(projectb, 1, 2)
+        # 10 changes in project-b, 2 months old
+        ten_changes_projectb_two_months_old = self._create_changes(projectb,
+                                                                   60,
+                                                                   10)
+        # 6 changes in project-c, 5 months old
+        six_changes_projectc_five_months_old = self._create_changes(projectc,
+                                                                    150,
+                                                                    6)
+        # assign changes to reviewers
+        reviewer1 = "Kutty Krishnan"
+        reviewer2 = "Naaranathu Bhrandhan"
+        reviewer3 = "Thammanam Shaaji"
+        reviewer4 = "Sharada Mani"
+
+        self._create_reviewer(reviewer1, five_changes_projecta_day_old +
+                              two_changes_projectb_day_old,
+                              self._create_comments(mock_change, 1))
+        self._create_reviewer(reviewer2, five_changes_projecta_day_old +
+                              three_changes_projecta_two_weeks_old,
+                              self._create_comments(mock_change, 2))
+        self._create_reviewer(reviewer3, six_changes_projectc_five_months_old,
+                              self._create_comments(mock_change, 3))
+        self._create_reviewer(reviewer4, five_changes_projecta_day_old +
+                              ten_changes_projectb_two_months_old +
+                              six_changes_projectc_five_months_old,
+                              self._create_comments(mock_change, 4))
+
+        dump_db("test_reviewers.txt")
+
+        # one week, all projects
+        expected_reviewers = [
+            views._create_reviewer_info(reviewer1, 7, 1),
+            views._create_reviewer_info(reviewer2, 5, 2),
+            views._create_reviewer_info(reviewer4, 5, 4)
+        ]
+        self._assert_reviewers(views.PROJECT_ALL, "1 Week", expected_reviewers)
+
+        # one week, projecta
+        expected_reviewers = [
+            views._create_reviewer_info(reviewer1, 5, 1),
+            views._create_reviewer_info(reviewer2, 5, 2),
+            views._create_reviewer_info(reviewer4, 5, 4)
+        ]
+        self._assert_reviewers(projecta, "1 Week", expected_reviewers)
+
+        # one week, projectb
+        expected_reviewers = [
+            # Only Kutty Krishnan with 2 changes in the past week and no
+            # comments as single comment is on change in projecta
+            views._create_reviewer_info(reviewer1, 2, 0)
+        ]
+        self._assert_reviewers(projectb, "1 Week", expected_reviewers)
+
+        # one week, projectc, no reviewers with any changes
+        expected_reviewers = []
+        self._assert_reviewers(projectc, "1 Week", expected_reviewers)
+
+        # one month, projecta
+        expected_reviewers = [
+            views._create_reviewer_info(reviewer1, 5, 1),
+            views._create_reviewer_info(reviewer2, 8, 2),
+            views._create_reviewer_info(reviewer4, 5, 4)
+        ]
+        self._assert_reviewers(projecta, "1 Month", expected_reviewers)
+
+        # one month, projectb
+        expected_reviewers = [
+            views._create_reviewer_info(reviewer1, 2, 0)
+        ]
+        self._assert_reviewers(projectb, "1 Month", expected_reviewers)
+
+        # one month, projectc
+        expected_reviewers = []
+        self._assert_reviewers(projectc, "1 Month", expected_reviewers)
+
+        # three months, projecta
+        expected_reviewers = [
+            views._create_reviewer_info(reviewer1, 5, 1),
+            views._create_reviewer_info(reviewer2, 8, 2),
+            views._create_reviewer_info(reviewer4, 5, 4)
+        ]
+        self._assert_reviewers(projecta, "3 Months", expected_reviewers)
+
+        # three months, projectb
+        expected_reviewers = [
+            views._create_reviewer_info(reviewer1, 2, 0),
+            views._create_reviewer_info(reviewer4, 10, 0)
+        ]
+        self._assert_reviewers(projectb, "3 Months", expected_reviewers)
+
+        # three months, projectc
+        expected_reviewers = []
+        self._assert_reviewers(projectc, "3 Months", expected_reviewers)
+
+        # six months, projecta
+        expected_reviewers = [
+            views._create_reviewer_info(reviewer1, 5, 1),
+            views._create_reviewer_info(reviewer2, 8, 2),
+            views._create_reviewer_info(reviewer4, 5, 4)
+        ]
+        self._assert_reviewers(projecta, "6 Months", expected_reviewers)
+
+        # six months, projectb
+        expected_reviewers = [
+            views._create_reviewer_info(reviewer1, 2, 0),
+            views._create_reviewer_info(reviewer4, 10, 0)
+        ]
+        self._assert_reviewers(projectb, "6 Months", expected_reviewers)
+
+        # six months, projectc
+        expected_reviewers = [
+            views._create_reviewer_info(reviewer3, 6, 0),
+            views._create_reviewer_info(reviewer4, 6, 0)
+        ]
+        self._assert_reviewers(projectc, "6 Months", expected_reviewers)
+
+
 class TestSystem(TestCase):
 
     def test_fetch_and_store(self):
@@ -343,15 +681,4 @@ class TestSystem(TestCase):
         """
         fetcher.MAX_DAYS = 1
         fetcher.pull_and_store_changes()
-        from django.core.serializers import serialize
-        reviewers = Reviewer.objects.all()
-        changes = Change.objects.all()
-        comments = Comment.objects.all()
-        reviewers_json = serialize('json', list(reviewers))
-        changes_json = serialize('json', list(changes))
-        comments_json = serialize('json', list(comments))
-        f = open('dbdump.json', 'w')
-        f.write(reviewers_json)
-        f.write(changes_json)
-        f.write(comments_json)
-        f.close()
+        dump_db()

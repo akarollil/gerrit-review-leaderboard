@@ -48,6 +48,31 @@ def _change_exists(change_id):
     return change_count != 0
 
 
+def _ignore_comment(gerrit_change, gerrit_comment):
+    """Check if comment needs to be ignored
+
+    :arg pygerrit.models.Change gerrit_change: Change associated with comment
+    :arg pygerrit.models.Comment gerrit_comment: Comment to be checked
+    :Returns: True if comment should be ignored, False otherwise
+    """
+    reviewer_name = gerrit_comment.reviewer.name
+    # ignore Jenkins Build or Gerrit Code Review comments
+    if "Jenkins" in reviewer_name or "Gerrit" in reviewer_name:
+        return True
+    # ignore change owner comments (replies)
+    if gerrit_change.owner.name == reviewer_name:
+        return True
+    # ignore comments that are just +1s or +2s
+    if "Code-Review+1" in gerrit_comment.message or \
+            "Code-Review+2" in gerrit_comment.message:
+        return True
+    # ignore comments related to rebases
+    if "was rebased"in gerrit_comment.message:
+        return True
+
+    return False
+
+
 def update(gerrit_changes):
     """Update database based on given gerrit changes
 
@@ -55,42 +80,43 @@ def update(gerrit_changes):
     list of gerrit changes. Adds comments and changes to reviewers,
     creating new reviewers if they don't exist. Ignores duplicate
     changes if any.
-    :arg List of pygerrit.models.Change: list of changes fetched using pygerrit from gerrit
+    :arg List of pygerrit.models.Change: list of changes fetched using
+        pygerrit from gerrit
     """
     for gerrit_change in gerrit_changes:
-        change = Change()
-        change.timestamp = convert_to_utc_datetime(
-            gerrit_change.last_update_timestamp)
-        change.owner_full_name = gerrit_change.owner.name
-        change.subject = gerrit_change.subject
-        change.project_name = gerrit_change.project
-        change.change_id = gerrit_change.change_id
-        if _change_exists(change.change_id):
+        if _change_exists(gerrit_change.change_id):
             # This could happen either because of a fetch overlap or because of
             # a comment added to a merged change. Ignore both.
             continue
-        # commit to database
+        change_timestamp = convert_to_utc_datetime(
+            gerrit_change.last_update_timestamp)
+        # create change
+        change = Change(
+            timestamp=change_timestamp,
+            owner_full_name=gerrit_change.owner.name,
+            subject=gerrit_change.subject,
+            project_name=gerrit_change.project,
+            change_id=gerrit_change.change_id
+        )
+        # commit change to database
         change.save()
-        # reviewers for change
-        reviewers = []
         # process comments, add comment and change to reviewer
         for gerrit_comment in gerrit_change.comments:
-            comment = Comment()
-            comment.timestamp = convert_to_utc_datetime(
+            # ignore comment if necessary
+            if _ignore_comment(gerrit_change, gerrit_comment):
+                continue
+            # create comment
+            comment_timestamp = convert_to_utc_datetime(
                 gerrit_comment.timestamp)
-            comment.message = gerrit_comment.message
-            # link comment to change
-            comment.change = change
-            # commit to database
+            comment = Comment(
+                timestamp=comment_timestamp,
+                message=gerrit_comment.message,
+                change=change)
             comment.save()
-            reviewer_name = gerrit_comment.reviewer.name
-            reviewer = _get_or_create_reviewer(reviewer_name)
+            # get reviewer, creating if necessary
+            reviewer = _get_or_create_reviewer(gerrit_comment.reviewer.name)
             # link comment to reviewer
             reviewer.comments.add(comment)
             # link change to reviewer (change already linked will just get
             # updated
             reviewer.changes.add(change)
-            # save reviewer
-            reviewer.save()
-            # add to list of reviewers for this change
-            reviewers.append(reviewer)
