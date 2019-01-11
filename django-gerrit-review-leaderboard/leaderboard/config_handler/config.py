@@ -1,14 +1,14 @@
 """Handles creation and loading of configuration file for fetching changes
 from gerrit"""
 import configparser
+from django.conf import settings
 import logging
 import os
 
 
 # configuration file for fetching gerrit changes
 CONFIG_FILE = "fetcher.cfg"
-CUR_DIR = os.getcwd()
-CONFIG_FILE_PATH = "%s/%s" % (CUR_DIR, CONFIG_FILE)
+CONFIG_FILE_PATH = os.path.join(settings.BASE_DIR, CONFIG_FILE)
 CONFIG_FILE_SECTION = "fetch"
 
 
