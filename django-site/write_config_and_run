@@ -1,0 +1,62 @@
+#!/bin/bash
+
+set -ex
+
+# Writes gerrit review leaderboard app config provided by user when starting
+# container
+
+APP_CONFIG_PATH="/var/www/gerrit-review-leaderboard/fetcher.cfg"
+
+usage() {
+    echo "Usage: $0 -s <server-name> -u <username> [-p <port>]" 1>&2
+    exit 1
+}
+
+while getopts ":s:p:u:" opt; do
+    case ${opt} in
+        s )
+            gerrit_server_name=$OPTARG
+            ;;
+        p )
+            gerrit_server_port=$OPTARG
+            ;;
+        u )
+            gerrit_server_uname=$OPTARG
+            ;;
+        \? )
+            echo "Invalid option: $OPTARG" 1>&2
+            usage
+        ;;
+        : )
+            echo "Invalid option: $OPTARG requires an argument" 1>&2
+            usage
+        ;;
+  esac
+done
+
+if [[ -z "${gerrit_server_name}" || -z "${gerrit_server_uname}" ]]; then
+    usage
+fi
+
+if [[ -z "${gerrit_server_port}" ]]; then
+    gerrit_server_port=29418
+fi
+
+cat << EOF > "${APP_CONFIG_PATH}"
+[fetch]
+hostname = ${gerrit_server_name}
+port = ${gerrit_server_port}
+username = ${gerrit_server_uname}
+maxdays = 180
+EOF
+
+chown www-data:www-data "${APP_CONFIG_PATH}"
+
+# Should be mounted into container
+if [[ ! -e /var/www/.ssh/id_rsa ]]; then
+    echo "Private key for gerrit server SSH authentication not found!" 1>&2
+    exit 1
+fi
+chown www-data:www-data /var/www/.ssh/id_rsa
+
+apache2ctl -D FOREGROUND
