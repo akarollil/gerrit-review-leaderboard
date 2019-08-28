@@ -1,39 +1,84 @@
 # Gerrit Review Leaderboard
 
-Simple web application that shows leaderboards for gerrit reviews. Leaderboards shown are for:
+Simple Python Django web application that shows leaderboards for gerrit
+reviewers ranking them based on review count or comment count. Leaderboards
+shown are for merged changes and open changes. Filters are available Gerrit
+projects discovered and for periods of a week, a month, 3 months, or 6 months.
 
-* Count of reviews
-* Count of comments
+![alt text](./screenshot.png "Screenshot")
 
-across reviews for periods of day, week, month, 3 months, and 6 months.
+The application connects to a gerrit server using SSH (using Pygerrit/Python
+Paramiko) using a configured SSH private key, and pulls down Gerrit 'changes'
+into an sqlite database, which is then used by Django to render the leaderboard
+tables. Configuration for connecting to the gerrit server, and for amount of
+changes to pull down is specified in a config file. Initial fetch pulls in all
+changes for a period specified, after which subsequent fetches only pull in
+newly merged changes.
 
-## Installation
+## Run using docker
 
-### Prerequisites
+Do the following on a host machine with docker installed to quickly get going:
 
-Host with:
+* Clone the repository:
 
-* a webserver
-* Python
-** pygerrit (https://pypi.python.org/pypi/pygerrit/0.2.1)
-* SSH public key access to gerrit service
+        git clone git@github.com:akarollil/gerrit-review-leaderboard.git
 
-### Setup
+* Build a docker image:
 
-* Download gerrit-review-board.zip
-* Untar to webserver resources folder
-* Setup xxxx
+        docker build -t gerrit-review-board .
 
-## Design
+* On the Gerrit server *gerrit-server* you are interested in, create a
+  read-only user *gerrit-user* for using to fetch changes via SSH. Create an
+  SSH key pair, and install the public key for the user on the server. Save the
+  *SSH private key* on the host machine being setup.
+* Run container:
 
-###  Requirements
+        docker run -ti -v <path to SSH private key>:/var/www/.ssh/id_rsa \
+            gerrit-review-board -s <gerrit-server> -u <gerrit-user>
 
-* List of reviewers ranked by review count, and comment count, filter-able by project, time frame
+## Run a test server and tests
 
-### UI
+### Install dependencies
 
-Simple page that shows ranking table and allows sorting based on review count or comment count and has a choice of time frame (day, week, month)
+* Install django, setup-tools, pip
 
-### Backend
+        sudo apt-get install python3-django python3-setuptools python3-pip
 
-Python service that connects to gerrit, syncs changes and associated comments across projects, and provides model for UI to fetch information for leaderboard. Initial sync is for commits up to 6 months old. Further syncs are driven by refreshes and by an hourly fetch driven by a timer. Each subsequent fetch driven by client request or timer will be for changes updated or comments posted after the most recent change/comment timestamp. Currently the granularity of a fetch is a UTC day (gerrit query specifying a timestamp that includes seconds or the timezone is broken).
+* Install version of pygerrit tweaked to retrieve more info about reviews
+
+        pip3 install git+https://git@github.com/akarollil/pygerrit.git#egg=pygerrit-master
+
+### Run test server
+
+* Run the following command from django-gerrit-review-leaderboard to apply
+   django migrations to database:
+
+        PYTHONPATH=.:$PYTHONPATH python3 ../django-site/manage.py migrate
+* Run the following command from django-gerrit-review-leaderboard to run the
+   test server:
+
+        PYTHONPATH=.:$PYTHONPATH python3 ../django-site/manage.py runserver
+* Navigate to 127.0.0.1:8000 (or whatever URL runserver prints) in your browser. 
+   This will show an incomplete page.
+* Update newly created django-site/fetcher.cfg with gerrit server hostname,
+   username, port.
+* Make sure SSH private key for username configured in django-site/fetcher.cfg
+   is present in ~/.ssh/id_rsa for user running runserver command
+* Refresh the browser page - you should see the debug server printing out fetch
+   statements, and the browser should display review leaderboards.
+
+### Run tests
+
+Run the following command from django-gerrit-review-leaderboard
+
+        PYTHONPATH=.:$PYTHONPATH python3 ../django-site/manage.py test
+
+
+## TODO
+
+* Pull data in the background and refresh once fetch is complete
+* Use database for storing gerrit server configuration and SSH private key
+* Re-use gerrit SSH connection if possible
+* Sort project list based on number of reviews in project
+* Automatic pulling in of changes periodically (for HUD)
+* Automate refresh of web page with cycling of projects (for HUD)
